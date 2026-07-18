@@ -12,6 +12,8 @@ from sklearn.model_selection import (
 )
 
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import joblib
+from ft_engineering import build_preprocessor, _get_feature_columns, limpiar_categoricas_con_ruido_numerico
 
 # métricas utilizadas en validación cruzada
 scoring_metrics = ["accuracy", "precision", "recall", "f1", "roc_auc"]
@@ -53,6 +55,8 @@ def build_model(
     names_of_x_cols = data_params["names_of_x_cols"]
     dataset = data_params["dataset"]
 
+    dataset = limpiar_categoricas_con_ruido_numerico(dataset, 'tendencia_ingresos',['Creciente','Decreciente','Estable'] )
+
     # Separate the feature columns and the target column
     X = dataset[names_of_x_cols]
     Y = dataset[name_of_y_col]
@@ -62,9 +66,15 @@ def build_model(
         X, Y, test_size=test_frac, random_state=1234
     )
 
+    # Detecta qué columnas numéricas/categóricas/ordinales hay en x_train
+    numeric_cols, categorical_cols, ordinal_cols = _get_feature_columns(x_train)
+    preprocessor = build_preprocessor(numeric_cols, categorical_cols, ordinal_cols)
+
     # Create the pipeline with preprocessing and the classification model
     classifier_pipe = Pipeline(
-        steps=[("model", classifier_fn)]
+        steps=[
+            ("preprocessor", preprocessor),
+            ("model", classifier_fn)]
     )
 
     # Train the classifier pipeline
@@ -183,5 +193,6 @@ def build_model(
     print("Fit Times Std:", fit_times_std)
     print("Score Times Mean:", score_times_mean)
     print("Score Times Std:", score_times_std)
+    joblib.dump(model, "modelo_pipeline.pkl")
 
     return {"train": train_summary, "test": test_summary}
