@@ -1,82 +1,147 @@
-from ft_engineering import ft_engineering
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+# src/model_evaluation.py
+import os
 import io
+
+import joblib
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from sklearn.model_selection import(
-    KFold,
-    ShuffleSplit,
-    cross_val_score,
-    learning_curve,
-    train_test_split,
-)
-import numpy as np
-import xgboost as xgb
 import pandas as pd
 import seaborn as sns
-def evaluation():
-    
-    results_df = pd.DataFrame({'Model': {48: 'xgboost', 49: 'xgboost', 50: 'xgboost', 51: 'xgboost', 52: 'xgboost', 53: 'xgboost', 54: 'xgboost', 55: 'xgboost', 56: 'xgboost', 57: 'xgboost', 58: 'xgboost', 59: 'xgboost'}, 'Data Set': {48: 'train', 49: 'train', 50: 'train', 51: 'train', 52: 'train', 53: 'train', 54: 'test', 55: 'test', 56: 'test', 57: 'test', 58: 'test', 59: 'test'}, 'Metric': {48: 'accuracy', 49: 'precision', 50: 'recall', 51: 'f1_score', 52: 'roc_auc', 53: 'casosNoPagoAtiempo', 54: 'accuracy', 55: 'precision', 56: 'recall', 57: 'f1_score', 58: 'roc_auc', 59: 'casosNoPagoAtiempo'}, 'Score': {48: 0.9585302457466919, 49: 0.5125, 50: 1.0, 51: 0.6776859504132231, 52: 0.9783199505867819, 53: 720.0, 54: 0.8889938592347661, 55: 0.17341040462427745, 56: 0.2459016393442623, 57: 0.2033898305084746, 58: 0.5871112206746374, 59: 173.0}})
-    metrics_to_plot = ["accuracy", "precision", "recall", "f1_score", "roc_auc","casosNoPagoAtiempo"]
-    model = xgb.Booster()
-    model.load_model("xgb_model.json")
-    # Es una buena práctica guardar los nombres de las features para asegurar el orden
-    model_features = model.feature_names
-    df = ft_engineering()
-    df.columns = [x.replace('__','_') for x in df.columns]
-    X = df[model_features]
-    X = xgb.DMatrix(X)
-    Y = df["Pago_atiempo"]
-    y_pred = model.predict(X)
-    threshold = 0.5
-    y_pred= [1 if prob >= threshold else 0 for prob in y_pred]
-    # Crear una figura con una cuadrícula de subplots (3 filas, 2 columnas)
-    fig, axes = plt.subplots(3, 2, figsize=(30, 18))
-    axes = axes.flatten() # Aplanar la matriz de ejes para iterar fácilmente
-    fig.suptitle('Evaluaciones de modelo XGBoost', fontsize=30)
-    # Iterar sobre cada métrica y crear un gráfico para ella
-    custom_titles = {
-        'precision': 'Precisión no pago a tiempo',
-        'recall': 'Recall no pago a tiempo',
-        'f1_score': 'F1 no pago a tiempo',
-        'accuracy': 'Accuracy General',
-        'roc_auc': 'ROC AUC',
-        'casosNoPagoAtiempo': 'Conteo Casos No Pago a Tiempo'
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+from sklearn.model_selection import train_test_split
+
+from cargar_datos import cargarDatos
+from ft_engineering import (
+    TARGET,
+    COLUMNAS_NUMERIC,
+    COLUMNAS_CATEGORIC,
+    COLUMNAS_ORDINAL,
+    limpiar_categoricas_con_ruido_numerico,
+)
+
+# Debe coincidir con la ruta que usan model_training.py (joblib.dump) y model_monitoring.py
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "modelo_pipeline.pkl")
+
+# Mismos parámetros de split usados en model_training.build_model, para reproducir
+# el mismo conjunto de test sobre el que quedó evaluado el modelo entrenado.
+TEST_FRAC = 0.2
+RANDOM_STATE = 1234
+
+# Clase de interés del negocio: "no pago a tiempo" (la clase minoritaria)
+POS_LABEL = 0
+
+CUSTOM_TITLES = {
+    "precision": "Precisión no pago a tiempo",
+    "recall": "Recall no pago a tiempo",
+    "f1_score": "F1 no pago a tiempo",
+    "accuracy": "Accuracy General",
+    "roc_auc": "ROC AUC",
+    "casosNoPagoAtiempo": "Conteo Casos No Pago a Tiempo",
+}
+METRICS_TO_PLOT = ["accuracy", "precision", "recall", "f1_score", "roc_auc", "casosNoPagoAtiempo"]
+
+
+def _load_evaluation_data():
+    """Carga los datos crudos y reproduce el mismo split usado en entrenamiento."""
+    df = cargarDatos()
+    df = limpiar_categoricas_con_ruido_numerico(
+        df, "tendencia_ingresos", ["Creciente", "Decreciente", "Estable"]
+    )
+
+    feature_cols = COLUMNAS_NUMERIC + COLUMNAS_CATEGORIC + COLUMNAS_ORDINAL
+    X = df[feature_cols]
+    y = df[TARGET]
+
+    return train_test_split(X, y, test_size=TEST_FRAC, random_state=RANDOM_STATE)
+
+
+def summarize_split(y_true, y_pred, y_proba):
+    """Métricas de clasificación tomando 'no pago a tiempo' (0) como clase positiva."""
+    return {
+        "accuracy": accuracy_score(y_true, y_pred),
+        "precision": precision_score(y_true, y_pred, pos_label=POS_LABEL, zero_division=0),
+        "recall": recall_score(y_true, y_pred, pos_label=POS_LABEL, zero_division=0),
+        "f1_score": f1_score(y_true, y_pred, pos_label=POS_LABEL, zero_division=0),
+        "roc_auc": roc_auc_score(y_true, y_proba),
+        "casosNoPagoAtiempo": int((y_true == POS_LABEL).sum()),
     }
-    for i, metric in enumerate(metrics_to_plot):
+
+
+def build_results_df(model_name, model, x_train, x_test, y_train, y_test):
+    y_pred_train = model.predict(x_train)
+    y_proba_train = model.predict_proba(x_train)[:, 1]
+    y_pred_test = model.predict(x_test)
+    y_proba_test = model.predict_proba(x_test)[:, 1]
+
+    train_metrics = summarize_split(y_train, y_pred_train, y_proba_train)
+    test_metrics = summarize_split(y_test, y_pred_test, y_proba_test)
+
+    records = []
+    for data_set, metrics in [("train", train_metrics), ("test", test_metrics)]:
+        for metric_name, score in metrics.items():
+            records.append({
+                "Model": model_name,
+                "Data Set": data_set,
+                "Metric": metric_name,
+                "Score": score,
+            })
+    return pd.DataFrame(records)
+
+
+def evaluation():
+    """
+    Carga el pipeline entrenado (preprocesador + modelo), reproduce el split
+    train/test usado en entrenamiento, calcula las métricas de clasificación
+    reales sobre ambos conjuntos y devuelve un PNG (BytesIO) comparándolas.
+    """
+    pipeline = joblib.load(MODEL_PATH)
+    x_train, x_test, y_train, y_test = _load_evaluation_data()
+
+    model_name = pipeline.named_steps["model"].__class__.__name__
+    results_df = build_results_df(model_name, pipeline, x_train, x_test, y_train, y_test)
+
+    fig, axes = plt.subplots(3, 2, figsize=(30, 18))
+    axes = axes.flatten()
+    fig.suptitle(f"Evaluaciones de modelo {model_name}", fontsize=30)
+
+    for i, metric in enumerate(METRICS_TO_PLOT):
         ax = axes[i]
-        # Filtrar el DataFrame para la métrica actual
         metric_df = results_df[results_df["Metric"] == metric]
-        
-        # Crear el gráfico de barras agrupado
+
         sns.barplot(data=metric_df, x="Model", y="Score", hue="Data Set", ax=ax, palette="cividis")
         ax.legend(fontsize=18)
-        title = custom_titles.get(metric, metric.replace("_", " ").title())
+        title = CUSTOM_TITLES.get(metric, metric.replace("_", " ").title())
         ax.set_title(title, fontsize=24)
         ax.set_xticks([])
         ax.set_ylabel("Puntuación", fontsize=18)
         ax.set_xlabel("")
-        ax.tick_params(axis='x', rotation=45, labelsize=18)
-        ax.tick_params(axis='y', labelsize=18)
-        # Ajustar el límite del eje Y para que la comparación sea justa
-        # Para ROC AUC, la escala es de 0.45 a 1.05 para ver mejor las diferencias
-        if metric == 'roc_auc':
+        ax.tick_params(axis="x", rotation=45, labelsize=18)
+        ax.tick_params(axis="y", labelsize=18)
+
+        if metric == "roc_auc":
             ax.set_ylim(0.45, 1.05)
-        elif metric == 'casosNoPagoAtiempo':
+        elif metric == "casosNoPagoAtiempo":
             max_no_pago = results_df[results_df["Metric"] == "casosNoPagoAtiempo"]["Score"].max()
             ax.set_ylim(0, max_no_pago + 5)
         else:
             ax.set_ylim(0, 1.05)
 
-    # Ocultar el último subplot que no se usa
-    if len(metrics_to_plot) < len(axes):
+    if len(METRICS_TO_PLOT) < len(axes):
         axes[-1].set_visible(False)
 
-    # Ajustar el diseño para que no se superpongan los títulos
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     buf = io.BytesIO()
-    plt.savefig(buf, format='png')
+    plt.savefig(buf, format="png")
     plt.close(fig)
     buf.seek(0)
-    
+
     return buf
+
+
+if __name__ == "__main__":
+    buffer = evaluation()
+    preview_path = os.path.join(os.path.dirname(__file__), "evaluation_preview.png")
+    with open(preview_path, "wb") as f:
+        f.write(buffer.getvalue())
+    print(f"Gráfico de evaluación guardado en {preview_path}")

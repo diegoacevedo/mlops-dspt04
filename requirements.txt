@@ -9,10 +9,12 @@ ipykernel
 seaborn
 ipywidgets
 scikit-learn
+joblib
 xgboost
 pydantic
 fastapi
 uvicorn[standard]
+python-multipart
 streamlit
 plotly
 evidently
