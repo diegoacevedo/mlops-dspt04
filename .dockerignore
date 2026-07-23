@@ -1,0 +1,37 @@
+# Entorno virtual local: nunca debe entrar a la imagen (es enorme e irrelevante,
+# la imagen instala sus propias dependencias con requirements.txt)
+.mlops/
+.venv/
+venv/
+
+# Control de versiones
+.git/
+.gitignore
+
+# Cache y artefactos de Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Notebooks: pesados y no se usan en producción, solo en desarrollo/EDA
+*.ipynb
+.ipynb_checkpoints/
+
+# Artefactos que se regeneran en tiempo de ejecución (no deben "congelarse" en la imagen)
+monitoring_log.csv
+drift_report.html
+
+# Dataset de drift artificial: lo usa solo el dashboard de monitoreo (Streamlit),
+# no la API
+Base_de_datos_drift.csv
+
+# Documentación y metadatos que no hacen falta dentro del contenedor
+readme.md
+Dockerfile
+.dockerignore
+
+# Editores / entornos locales
+.env
+.vscode/
+.idea/

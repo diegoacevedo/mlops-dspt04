@@ -7,14 +7,24 @@ import plotly.express as px
 import plotly.graph_objects as go
 from evidently import Report
 from evidently.presets import DataDriftPreset
-from sklearn.model_selection import train_test_split
+
+from cargar_datos import cargarDatos
+from ft_engineering import EXCLUIR_DE_X
 
 # ================================
 # 1. Configuración
 # ================================
-MODEL_PATH = "modelo_pipeline.pkl"   # pipeline completo (preprocesador + modelo)
-DATASET_PATH = "../Base_de_datos_drift.csv"   # dataset crudo
-MONITOR_LOG = "monitoring_log.csv"  # dataset para monitorear
+SRC_DIR = os.path.dirname(__file__)
+PROJECT_DIR = os.path.dirname(SRC_DIR)
+
+MODEL_PATH = os.path.join(SRC_DIR, "modelo_pipeline.pkl")  # pipeline completo (preprocesador + modelo)
+# Dataset con drift artificial: simula los datos "actuales"/de producción,
+# se compara contra el dataset original con el que se entrenó el modelo.
+DRIFT_DATASET_PATH = os.path.join(PROJECT_DIR, "Base_de_datos_drift.csv")
+MONITOR_LOG = os.path.join(SRC_DIR, "monitoring_log.csv")  # log de predicciones para monitorear
+DRIFT_REPORT_PATH = os.path.join(SRC_DIR, "drift_report.html")  # reporte HTML de Evidently
+
+TARGET = "Pago_atiempo"
 
 # ================================
 # 2. Cargar pipeline entrenado
@@ -26,17 +36,28 @@ def load_pipeline():
 pipeline = load_pipeline()
 
 # ================================
-# 3. Cargar dataset y dividir
+# 3. Cargar datos de referencia (original) y datos actuales (con drift)
 # ================================
 @st.cache_data
 def load_data():
-    df = pd.read_csv(DATASET_PATH)
-    target = "Pago_atiempo"
-    X = df.drop(columns=[target])
-    y = df[target]
-    X_ref, X_new, y_ref, y_new = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+    # Columnas que tampoco se usan para entrenar el modelo (leakage/irrelevantes,
+    # ver ft_engineering.EXCLUIR_DE_X). Se excluyen también acá para que la
+    # comparación de drift quede pareja entre ambos datasets (p. ej. fecha_prestamo
+    # llega con dtype distinto en el xlsx original vs. el csv de drift).
+    def split_x_y(df):
+        cols_to_drop = [TARGET] + [c for c in EXCLUIR_DE_X if c in df.columns]
+        X = df.drop(columns=cols_to_drop)
+        y = df[TARGET]
+        return X, y
+
+    # Referencia: el dataset original con el que se entrenó el modelo
+    df_ref = cargarDatos()
+    X_ref, y_ref = split_x_y(df_ref)
+
+    # "Producción": dataset con drift artificial, representa los datos actuales
+    df_new = pd.read_csv(DRIFT_DATASET_PATH)
+    X_new, y_new = split_x_y(df_new)
+
     return X_ref, X_new, y_ref, y_new
 
 X_ref, X_new, y_ref, y_new = load_data()
@@ -189,14 +210,30 @@ if os.path.exists(MONITOR_LOG):
 
     with tab2:
         st.subheader("📊 Reporte de Data Drift")
+
+        # Si monitoring_log.csv quedó de una corrida anterior con otro esquema de
+        # columnas (por ejemplo antes de excluir fecha_prestamo/puntaje), comparamos
+        # solo las columnas presentes en ambos lados para no romper el reporte.
+        logged_features = logged_data.drop(columns=["prediction", "timestamp"], errors="ignore")
+        columnas_comunes = [c for c in X_ref.columns if c in logged_features.columns]
+        columnas_extra = [c for c in logged_features.columns if c not in X_ref.columns]
+
+        if columnas_extra:
+            st.info(
+                f"⚠️ El log de monitoreo tiene columnas que ya no están en los datos de "
+                f"referencia ({', '.join(columnas_extra)}). Probablemente viene de una corrida "
+                f"anterior con otro esquema — se ignoran para este reporte. Si querés un log "
+                f"limpio, borrá `monitoring_log.csv` y volvé a generar predicciones."
+            )
+
         drift_report = generate_drift_report(
-            X_ref, logged_data.drop(columns=["prediction", "timestamp"], errors="ignore")
+            X_ref[columnas_comunes], logged_features[columnas_comunes]
         )
 
         # Mostrar reporte
         try:
-            drift_report.save_html("drift_report.html")
-            with open("drift_report.html", "r", encoding="utf-8") as f:
+            drift_report.save_html(DRIFT_REPORT_PATH)
+            with open(DRIFT_REPORT_PATH, "r", encoding="utf-8") as f:
                 html_content = f.read()
             st.components.v1.html(html_content, height=1000, scrolling=True)
         except Exception:
